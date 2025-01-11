@@ -1,83 +1,90 @@
 import os
-from hindi_bpe import HindiBPE
 from tqdm import tqdm
+from hindi_bpe import HindiBPE
+import pickle
 
-def load_processed_data_in_chunks(file_path: str, max_sentences: int = 1_000_000) -> str:
-    """Load data in chunks, up to max_sentences"""
-    buffer = []
-    sentence_count = 0
+def load_data_in_chunks(file_path: str, chunk_size: int = 10000, max_lines: int = 1_000_000):
+    """Load and process the Hindi dataset in chunks"""
+    print(f"Loading data from {file_path}")
+    chunk = []
+    total_lines = 0
     
     with open(file_path, 'r', encoding='utf-8') as f:
-        for line in tqdm(f, desc="Reading sentences"):
-            if sentence_count >= max_sentences:
+        for line in tqdm(f, desc="Reading lines"):
+            if total_lines >= max_lines:
+                if chunk:  # Yield the last chunk
+                    yield '\n'.join(chunk)
                 break
                 
-            line = line.strip()
-            if not line:
-                continue
-                
-            buffer.append(line)
-            sentence_count += 1
+            if line.strip():
+                chunk.append(line.strip())
+                if len(chunk) >= chunk_size:
+                    yield '\n'.join(chunk)
+                    chunk = []
+            total_lines += 1
             
-            if len(buffer) >= 10000:  # Process in chunks of 10K sentences
-                yield ' '.join(buffer)
-                buffer = []
-    
-    if buffer:  # Don't forget the last chunk
-        yield ' '.join(buffer)
+        if chunk:  # Don't forget the last chunk
+            yield '\n'.join(chunk)
 
 def main():
-    # Initialize paths
-    data_dir = os.path.join("..", "data")
-    processed_file = os.path.join(data_dir, "hi_processed.txt")
+    # Initialize tokenizer
+    tokenizer = HindiBPE(max_vocab_size=5000, target_compression=3.2)
     
-    # Check if processed data exists
-    if not os.path.exists(processed_file):
-        print("Processed data not found. Please run download_data.py first.")
+    # Load and process data
+    data_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data')
+    data_file = os.path.join(data_dir, 'hi_processed.txt')
+    
+    if not os.path.exists(data_file):
+        print("Error: Processed data file not found. Please run download_data.py first.")
         return
     
-    # Initialize BPE
-    print("Initializing BPE tokenizer...")
-    print("Training Parameters:")
-    print("1. Using first 1 million sentences")
-    print("2. Vocabulary size must be < 5000 tokens")
-    print("3. Compression ratio must be ≥ 3.2")
-    bpe = HindiBPE()
-    
-    print("\nTraining BPE model...")
+    print("\nTraining BPE tokenizer...")
+    # Train on chunks of data
+    best_compression = 0
+    chunk_count = 0
     is_first_chunk = True
-    total_sentences = 0
     
-    for chunk in load_processed_data_in_chunks(processed_file):
-        if not chunk.strip():
-            continue
-            
-        bpe.train_on_chunk(chunk, is_first_chunk=is_first_chunk)
+    for chunk in load_data_in_chunks(data_file):
+        chunk_count += 1
+        print(f"\nProcessing chunk {chunk_count}...")
+        
+        # Train on this chunk
+        tokenizer.train_on_chunk(chunk, is_first_chunk=is_first_chunk)
         is_first_chunk = False
         
-        # Check if we've met both requirements
-        test_text = chunk[:10000]  # Use a sample of text
-        compression_ratio = bpe.get_compression_ratio(test_text)
-        vocab_size = len(bpe.vocab)
+        # Calculate metrics
+        current_ratio = tokenizer.get_compression_ratio(chunk)
+        vocab_size = len(tokenizer.vocab)
         
-        print(f"\nCurrent status:")
-        print(f"Vocabulary size: {vocab_size} tokens")
-        print(f"Compression ratio: {compression_ratio:.2f}")
+        print(f"Current metrics:")
+        print(f"- Vocabulary size: {vocab_size} tokens")
+        print(f"- Compression ratio: {current_ratio:.2f}")
         
-        if compression_ratio >= 3.2:
-            if vocab_size < 5000:
-                print("\nSuccess! Met all requirements:")
-                print(f"1. Vocabulary size: {vocab_size} tokens (< 5000)")
-                print(f"2. Compression ratio: {compression_ratio:.2f} (≥ 3.2)")
-                break
-            else:
-                print("\nWarning: Need to reduce vocabulary size while maintaining compression ratio")
+        # Check if we've met our goals
+        if current_ratio >= 3.2 and vocab_size < 5000:
+            if current_ratio > best_compression:
+                best_compression = current_ratio
+                # Save the best model
+                model_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'models')
+                os.makedirs(model_path, exist_ok=True)
+                
+                state = {
+                    'vocab': tokenizer.vocab,
+                    'inverse_vocab': tokenizer.inverse_vocab,
+                    'bpe_ranks': tokenizer.bpe_ranks
+                }
+                
+                model_file = os.path.join(model_path, 'hindi_bpe_model.pkl')
+                with open(model_file, 'wb') as f:
+                    pickle.dump(state, f)
+                print(f"New best model saved! (compression ratio: {current_ratio:.2f})")
+        
+        # Early stopping if we've met our goals
+        if current_ratio >= 3.2 and vocab_size < 5000 and chunk_count >= 5:
+            print("\nMet all requirements and processed enough chunks. Stopping early.")
+            break
     
-    print("\nFinal Results:")
-    print(f"Vocabulary size: {len(bpe.vocab)} tokens")
-    print(f"Compression ratio: {compression_ratio:.2f}")
-    
-    # Test the model with various Hindi texts
+    # Test the final model
     test_cases = [
         "नमस्ते भारत",
         "मैं हिंदी सीख रहा हूं",
@@ -86,15 +93,19 @@ def main():
         "मुझे हिंदी भाषा बहुत पसंद है"
     ]
     
-    print("\nTesting encoding/decoding on multiple examples:")
-    for i, test_text in enumerate(test_cases, 1):
-        print(f"\nTest case {i}:")
-        print(f"Original: {test_text}")
-        encoded = bpe.encode(test_text)
+    print("\nTesting final model:")
+    for text in test_cases:
+        encoded = tokenizer.encode(text)
+        decoded = tokenizer.decode(encoded)
+        print(f"\nOriginal: {text}")
         print(f"Encoded: {encoded}")
-        decoded = bpe.decode(encoded)
         print(f"Decoded: {decoded}")
-        print(f"Matches: {'✓' if decoded == test_text else '✗'}")
+        print(f"Matches: {'✓' if text == decoded else '✗'}")
+    
+    # Print final metrics
+    print("\nFinal Results:")
+    print(f"Vocabulary size: {len(tokenizer.vocab)} tokens")
+    print(f"Best compression ratio: {best_compression:.2f}")
 
 if __name__ == "__main__":
     main() 

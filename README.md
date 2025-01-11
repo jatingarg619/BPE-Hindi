@@ -11,11 +11,16 @@ This project implements a Byte Pair Encoding (BPE) tokenizer specifically design
 - Special token handling (<PAD>, <UNK>, <BOS>, <EOS>)
 - Word boundary preservation using special tokens
 
+## Demo
+
+Try out the tokenizer on Hugging Face Spaces: [Hindi BPE Tokenizer Demo](https://huggingface.co/spaces/yourusername/hindi-bpe-tokenizer)
+
 ## Requirements
 - Python 3.7+
 - tqdm
 - regex
 - requests
+- gradio (for demo interface)
 
 ## Setup
 
@@ -32,6 +37,7 @@ pip install -r requirements.txt
 
 ## Usage
 
+### Local Development
 1. Download and process the Hindi dataset:
 ```bash
 cd src
@@ -41,6 +47,12 @@ python download_data.py
 2. Train the BPE tokenizer:
 ```bash
 python train_bpe.py
+```
+
+### Web Interface
+Run the Gradio interface locally:
+```bash
+python app.py
 ```
 
 ## Test Cases
@@ -97,6 +109,7 @@ Assignment_10/
 │   ├── download_data.py  # Data processing
 │   ├── hindi_bpe.py      # Core BPE implementation
 │   └── train_bpe.py      # Training script
+├── app.py                # Gradio web interface
 └── requirements.txt      # Dependencies
 ```
 
